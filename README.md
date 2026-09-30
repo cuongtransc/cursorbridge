@@ -10,17 +10,17 @@ bar and Mission Control keep using the macOS arrangement; only cursor travel is 
 
 ## Features
 
-- **Virtual layout editor** — drag displays around; edges snap together and shared edges show in green.
+- **Virtual layout editor**: drag displays around; edges snap together and shared edges show in green.
   A red dot tracks the live cursor so you can check the mapping.
-- **Jump across gaps** — when an edge touches nothing, the cursor lands on the nearest display facing it,
+- **Jump across gaps**: when an edge touches nothing, the cursor lands on the nearest display facing it,
   however wide the gap. Bridged gaps are shaded in the editor. Turn it off to make such edges walls.
-- **Edge links** — click *Link Edges…*, then an edge on one display and an edge on another. The two edges
+- **Edge links**: click *Link Edges…*, then an edge on one display and an edge on another. The two edges
   are joined end to end: halfway along one lands halfway along the other. A link overrides the layout for
   that edge, so it also works for displays that don't face each other, or to wrap from the far right of the
   desk back to the far left.
-- **Resolution or physical sizing** — in *Physical size* mode each display is sized in millimetres, so the
+- **Resolution or physical sizing**: in *Physical size* mode each display is sized in millimetres, so the
   cursor crosses at the same real-world height between a Retina laptop and a large external monitor.
-- **Identify Displays** — flashes a numbered badge on each screen, matching the numbers in the editor
+- **Identify Displays**: flashes a numbered badge on each screen, matching the numbers in the editor
   (handy with several identical monitors).
 - Layout is saved per display (keyed by the display's ColorSync UUID) and survives reconnects and reboots.
 - Launch at login.
@@ -51,7 +51,7 @@ CODESIGN_IDENTITY="Apple Development: you@example.com" make install
 A session `CGEventTap` sees every mouse-move and drag event. For each one, `CursorRouter`:
 
 1. finds the display the cursor was on before the move;
-2. works out whether the move leaves that display — either macOS moved the cursor onto a native
+2. works out whether the move leaves that display: either macOS moved the cursor onto a native
    neighbour, or pinned it against an edge while the event's delta still points outwards;
 3. resolves the edge it left through: an edge link if there is one, otherwise the display touching that
    edge in the virtual layout, otherwise (with gap jumping) the nearest display facing it;
