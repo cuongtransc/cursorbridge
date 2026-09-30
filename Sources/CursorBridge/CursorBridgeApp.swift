@@ -22,6 +22,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // With no window open, macOS would otherwise reclaim the app and the event tap with it.
         ProcessInfo.processInfo.disableAutomaticTermination("Routes the cursor between displays")
+        #if DEBUG
+        if let path = ProcessInfo.processInfo.environment["CURSORBRIDGE_SNAPSHOT"] {
+            layoutWindow.show()
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                layoutWindow.snapshot(to: URL(fileURLWithPath: path))
+                NSApp.terminate(nil)
+            }
+            return
+        }
+        #endif
         if !model.isTrusted {
             layoutWindow.show()
         }
@@ -54,6 +65,16 @@ final class LayoutWindowController {
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
     }
+
+    #if DEBUG
+    func snapshot(to url: URL) {
+        guard let view = window?.contentView?.superview,
+              let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+        else { return }
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        try? bitmap.representation(using: .png, properties: [:])?.write(to: url)
+    }
+    #endif
 
     private func makeWindow() -> NSWindow {
         let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(model: model)))

@@ -13,6 +13,7 @@ struct StoredSettings: Codable, Equatable {
     var origins: [String: [String: CGPoint]] = [:]
     var jumpsGaps = true
     var links: [EdgeLink] = []
+    var walls: [EdgeRef] = []
 
     init() {}
 
@@ -24,7 +25,22 @@ struct StoredSettings: Codable, Equatable {
         origins = try container.decodeIfPresent([String: [String: CGPoint]].self, forKey: .origins) ?? defaults.origins
         jumpsGaps = try container.decodeIfPresent(Bool.self, forKey: .jumpsGaps) ?? defaults.jumpsGaps
         links = try container.decodeIfPresent([EdgeLink].self, forKey: .links) ?? defaults.links
+        walls = try container.decodeIfPresent([EdgeRef].self, forKey: .walls) ?? defaults.walls
     }
+}
+
+enum EdgeRule: Hashable {
+    case automatic
+    case wall
+    case link(EdgeRef)
+}
+
+struct EdgeDestination: Hashable {
+    let display: Display
+    let acrossGap: Bool
+
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.display.id == rhs.display.id && lhs.acrossGap == rhs.acrossGap }
+    func hash(into hasher: inout Hasher) { hasher.combine(display.id); hasher.combine(acrossGap) }
 }
 
 @MainActor
@@ -44,6 +60,7 @@ final class AppModel {
     }
 
     @ObservationIgnored private let interceptor = MouseInterceptor()
+    @ObservationIgnored private var displayRefresh: Task<Void, Never>?
     @ObservationIgnored private static let settingsKey = "settings.v1"
 
     init() {
@@ -54,7 +71,12 @@ final class AppModel {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshDisplays() }
+            MainActor.assumeIsolated { self?.scheduleDisplayRefresh() }
+        }
+        for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
+            NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.scheduleDisplayRefresh() }
+            }
         }
         routingLog.notice("Launched; accessibility trusted: \(self.isTrusted, privacy: .public), bundle: \(Bundle.main.bundlePath, privacy: .public)")
         if !isTrusted {
@@ -80,15 +102,60 @@ final class AppModel {
     }
 
     var links: [EdgeLink] { settings.links }
+    var walls: Set<EdgeRef> { Set(settings.walls) }
 
-    /// Each edge carries at most one link, so linking an edge replaces whatever it was linked to.
+    func rule(for edge: EdgeRef) -> EdgeRule {
+        if settings.walls.contains(edge) { return .wall }
+        if let partner = settings.links.lazy.compactMap({ $0.counterpart(of: edge) }).first { return .link(partner) }
+        return .automatic
+    }
+
+    /// An edge has exactly one rule, so setting one clears whatever either edge of a new link had before.
+    func setRule(_ rule: EdgeRule, for edge: EdgeRef) {
+        var updated = settings
+        updated.clearRules(for: edge)
+        switch rule {
+        case .automatic:
+            break
+        case .wall:
+            updated.walls.append(edge)
+        case .link(let partner) where partner != edge:
+            updated.clearRules(for: partner)
+            updated.links.append(EdgeLink(edge, partner))
+        case .link:
+            break
+        }
+        settings = updated
+    }
+
     func link(_ a: EdgeRef, _ b: EdgeRef) {
-        guard a != b else { return }
-        settings.links = settings.links.filter { !$0.involves(a) && !$0.involves(b) } + [EdgeLink(a, b)]
+        setRule(.link(b), for: a)
     }
 
     func removeLink(_ link: EdgeLink) {
         settings.links.removeAll { $0 == link }
+    }
+
+    func removeWall(_ edge: EdgeRef) {
+        settings.walls.removeAll { $0 == edge }
+    }
+
+    /// Where the layout sends the cursor from `edge` when no wall or link overrides it.
+    func automaticDestinations(for edge: EdgeRef) -> [EdgeDestination] {
+        let placed = placedDisplays
+        guard let index = placed.firstIndex(where: { $0.id == edge.displayID }) else { return [] }
+        let reserved = walls.union(links.flatMap { [$0.a, $0.b] })
+        var destinations: [EdgeDestination] = []
+        for stretch in VirtualLayout.facingStretches(from: index, edge: edge.edge, in: placed.map(\.virtualFrame)) {
+            let acrossGap = stretch.gap > 0.5
+            let target = placed[stretch.targetIndex]
+            guard jumpsGaps || !acrossGap,
+                  !reserved.contains(EdgeRef(displayID: target.id, edge: edge.edge.opposite))
+            else { continue }
+            let destination = EdgeDestination(display: target.display, acrossGap: acrossGap)
+            if !destinations.contains(destination) { destinations.append(destination) }
+        }
+        return destinations
     }
 
     func display(withID id: String) -> Display? {
@@ -134,8 +201,25 @@ final class AppModel {
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 
+    /// While displays wake or reconnect macOS can report a partial or empty list and send no further
+    /// notice once it settles, so the list is read again a few times after every change.
+    private func scheduleDisplayRefresh() {
+        refreshDisplays()
+        displayRefresh?.cancel()
+        displayRefresh = Task {
+            for delay in [0.5, 1.5, 3.0, 6.0] {
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled else { return }
+                refreshDisplays()
+            }
+        }
+    }
+
     private func refreshDisplays() {
-        displays = DisplayProvider.current()
+        let current = DisplayProvider.current()
+        guard current != displays else { return }
+        routingLog.notice("Displays changed: \(self.displays.count, privacy: .public) -> \(current.count, privacy: .public)")
+        displays = current
         interceptor.resetTracking()
         applyRouting()
     }
@@ -146,7 +230,7 @@ final class AppModel {
             isIntercepting = false
             return
         }
-        interceptor.router = CursorRouter(displays: placedDisplays, jumpsGaps: jumpsGaps, links: links)
+        interceptor.router = CursorRouter(displays: placedDisplays, jumpsGaps: jumpsGaps, links: links, walls: walls)
         let wasIntercepting = isIntercepting
         isIntercepting = interceptor.start()
         if isIntercepting != wasIntercepting || !isIntercepting {
@@ -175,6 +259,13 @@ final class AppModel {
     private static func save(_ settings: StoredSettings) {
         guard let data = try? JSONEncoder().encode(settings) else { return }
         UserDefaults.standard.set(data, forKey: settingsKey)
+    }
+}
+
+private extension StoredSettings {
+    mutating func clearRules(for edge: EdgeRef) {
+        walls.removeAll { $0 == edge }
+        links.removeAll { $0.involves(edge) }
     }
 }
 

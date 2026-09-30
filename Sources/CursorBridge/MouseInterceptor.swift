@@ -14,6 +14,7 @@ final class MouseInterceptor: @unchecked Sendable {
     /// When the last warp happened, in the clock the event timestamps use.
     private var lastWarpStamp: UInt64?
     private var timestampsUseMachTicks: Bool?
+    private var pendingMove: PendingMove?
 
     private static let movedEventMarker: Int64 = 0x4342_5247
     private let moveSource: CGEventSource? = {
@@ -63,6 +64,7 @@ final class MouseInterceptor: @unchecked Sendable {
     func resetTracking() {
         lastLocation = nil
         lastWarpStamp = nil
+        pendingMove = nil
     }
 
     fileprivate func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
@@ -85,15 +87,23 @@ final class MouseInterceptor: @unchecked Sendable {
         }
 
         let location = event.location
-        guard let router, let previous = lastLocation else {
-            lastLocation = location
-            return Unmanaged.passUnretained(event)
-        }
-
         let delta = CGVector(
             dx: event.getDoubleValueField(.mouseEventDeltaX),
             dy: event.getDoubleValueField(.mouseEventDeltaY)
         )
+
+        if let pendingMove, let lastLocation {
+            if pendingMove.isStale(location: location, delta: delta, now: clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) {
+                event.location = lastLocation
+                return Unmanaged.passUnretained(event)
+            }
+            self.pendingMove = nil
+        }
+
+        guard let router, let previous = lastLocation else {
+            lastLocation = location
+            return Unmanaged.passUnretained(event)
+        }
         switch router.route(from: previous, to: location, delta: delta) {
         case .pass:
             lastLocation = location
@@ -108,6 +118,7 @@ final class MouseInterceptor: @unchecked Sendable {
             }
             lastWarpStamp = eventClockNow(matching: event.timestamp)
             if movedByEvent {
+                pendingMove = PendingMove(target: target, postedAt: clock_gettime_nsec_np(CLOCK_UPTIME_RAW))
                 return nil
             }
         }

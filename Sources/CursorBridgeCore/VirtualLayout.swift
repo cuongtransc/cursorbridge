@@ -75,37 +75,52 @@ public enum VirtualLayout {
         return segments
     }
 
-    /// The empty regions the cursor jumps across when gap jumping is on — one rectangle per stretch of
-    /// edge that faces another display with nothing nearer in between. Mirrors `CursorRouter`'s ray cast.
-    public static func gapBridges(of frames: [CGRect], tolerance: CGFloat = 0.5) -> [CGRect] {
-        var bridges: [CGRect] = []
-        for a in frames {
-            let rightward = frames
-                .filter { $0 != a && $0.minX >= a.maxX - tolerance }
-                .sorted { $0.minX < $1.minX }
-            var open = [a.minY..<a.maxY]
-            for b in rightward {
-                let covered = open.map { $0.clamped(to: b.minY..<b.maxY) }.filter { !$0.isEmpty }
-                if b.minX - a.maxX > tolerance {
-                    bridges += covered.map { CGRect(x: a.maxX, y: $0.lowerBound, width: b.minX - a.maxX, height: $0.upperBound - $0.lowerBound) }
-                }
-                open = open.flatMap { $0.subtracting(b.minY..<b.maxY) }
-            }
-
-            let downward = frames
-                .filter { $0 != a && $0.minY >= a.maxY - tolerance }
-                .sorted { $0.minY < $1.minY }
-            open = [a.minX..<a.maxX]
-            for b in downward {
-                let covered = open.map { $0.clamped(to: b.minX..<b.maxX) }.filter { !$0.isEmpty }
-                if b.minY - a.maxY > tolerance {
-                    bridges += covered.map { CGRect(x: $0.lowerBound, y: a.maxY, width: $0.upperBound - $0.lowerBound, height: b.minY - a.maxY) }
-                }
-                open = open.flatMap { $0.subtracting(b.minX..<b.maxX) }
+    /// The stretches of `edge` that look out onto another display, nearest first per stretch, with nothing
+    /// nearer in between. This is what `CursorRouter`'s ray cast reaches from each point on the edge.
+    public static func facingStretches(from index: Int, edge: Edge, in frames: [CGRect], tolerance: CGFloat = 0.5) -> [FacingStretch] {
+        let a = frames[index]
+        let candidates: [(index: Int, gap: CGFloat, span: Range<CGFloat>)] = frames.indices.compactMap { j in
+            guard j != index else { return nil }
+            let b = frames[j]
+            switch edge {
+            case .right where b.minX >= a.maxX - tolerance: return (j, b.minX - a.maxX, b.minY..<b.maxY)
+            case .left where b.maxX <= a.minX + tolerance: return (j, a.minX - b.maxX, b.minY..<b.maxY)
+            case .bottom where b.minY >= a.maxY - tolerance: return (j, b.minY - a.maxY, b.minX..<b.maxX)
+            case .top where b.maxY <= a.minY + tolerance: return (j, a.minY - b.maxY, b.minX..<b.maxX)
+            default: return nil
             }
         }
-        return bridges.filter { $0.width > tolerance && $0.height > tolerance }
+
+        var open = edge.runsVertically ? [a.minY..<a.maxY] : [a.minX..<a.maxX]
+        var stretches: [FacingStretch] = []
+        for candidate in candidates.sorted(by: { $0.gap < $1.gap }) {
+            let covered = open.map { $0.clamped(to: candidate.span) }.filter { $0.upperBound - $0.lowerBound > tolerance }
+            stretches += covered.map { FacingStretch(targetIndex: candidate.index, span: $0, gap: max(candidate.gap, 0)) }
+            open = open.flatMap { $0.subtracting(candidate.span) }
+        }
+        return stretches
     }
+
+    /// The empty regions the cursor jumps across when gap jumping is on.
+    public static func gapBridges(of frames: [CGRect], tolerance: CGFloat = 0.5) -> [CGRect] {
+        frames.indices.flatMap { i in
+            let a = frames[i]
+            let rightward = facingStretches(from: i, edge: .right, in: frames, tolerance: tolerance)
+                .filter { $0.gap > tolerance }
+                .map { CGRect(x: a.maxX, y: $0.span.lowerBound, width: $0.gap, height: $0.span.upperBound - $0.span.lowerBound) }
+            let downward = facingStretches(from: i, edge: .bottom, in: frames, tolerance: tolerance)
+                .filter { $0.gap > tolerance }
+                .map { CGRect(x: $0.span.lowerBound, y: a.maxY, width: $0.span.upperBound - $0.span.lowerBound, height: $0.gap) }
+            return rightward + downward
+        }
+    }
+}
+
+public struct FacingStretch: Equatable, Sendable {
+    public let targetIndex: Int
+    /// Along the edge: y for left/right edges, x for top/bottom.
+    public let span: Range<CGFloat>
+    public let gap: CGFloat
 }
 
 private extension Range where Bound == CGFloat {

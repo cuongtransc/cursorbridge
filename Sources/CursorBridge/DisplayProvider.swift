@@ -10,7 +10,7 @@ enum DisplayProvider {
         guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return [] }
 
         let names = Dictionary(
-            NSScreen.screens.compactMap { screen in screen.displayID.map { ($0, screen.localizedName) } },
+            NSScreen.screens.compactMap { screen in screen.displayID.map { ($0, withoutDuplicateSuffix(screen.localizedName)) } },
             uniquingKeysWith: { first, _ in first }
         )
 
@@ -32,6 +32,11 @@ enum DisplayProvider {
                     physicalSize: orientedPhysicalSize(of: id)
                 )
             }
+    }
+
+    /// macOS tells identical monitors apart as "Name (1)", "Name (2)"; those numbers clash with the app's own.
+    private static func withoutDuplicateSuffix(_ name: String) -> String {
+        name.replacingOccurrences(of: #"\s\(\d+\)$"#, with: "", options: .regularExpression)
     }
 
     /// Display IDs change across reboots and reconnects; the ColorSync UUID survives them.

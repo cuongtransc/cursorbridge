@@ -4,6 +4,15 @@ public enum Edge: String, Codable, CaseIterable, Sendable {
     case top, bottom, left, right
 
     var runsVertically: Bool { self == .left || self == .right }
+
+    public var opposite: Edge {
+        switch self {
+        case .top: .bottom
+        case .bottom: .top
+        case .left: .right
+        case .right: .left
+        }
+    }
 }
 
 public struct EdgeRef: Codable, Hashable, Sendable {

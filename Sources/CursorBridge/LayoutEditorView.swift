@@ -12,6 +12,7 @@ enum LinkPicking: Equatable {
 
 struct LayoutEditorView: View {
     @Bindable var model: AppModel
+    @Binding var selection: String?
     @Binding var linkPicking: LinkPicking
     @State private var drag: DragState?
     @State private var hoveredEdge: EdgeRef?
@@ -34,11 +35,16 @@ struct LayoutEditorView: View {
             let placed = model.placedDisplays
             let transform = drag?.transform ?? CanvasTransform(fitting: placed.map(\.virtualFrame), in: proxy.size)
             let frames = Dictionary(uniqueKeysWithValues: placed.map { ($0.id, $0.id == drag?.id ? drag!.frame : $0.virtualFrame) })
-            let frameList = placed.compactMap { frames[$0.id] }
+            let ids = placed.map(\.id)
+            let frameList = ids.compactMap { frames[$0] }
 
             ZStack(alignment: .topLeading) {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { if !linkPicking.isActive { selection = nil } }
+
                 if model.jumpsGaps {
-                    ForEach(Array(VirtualLayout.gapBridges(of: frameList).enumerated()), id: \.offset) { _, bridge in
+                    ForEach(Array(bridges(ids: ids, frames: frameList).enumerated()), id: \.offset) { _, bridge in
                         GapBridge(rect: transform.toCanvas(bridge))
                     }
                 }
@@ -51,6 +57,7 @@ struct LayoutEditorView: View {
                         virtualSize: frames[display.id]!.size,
                         mode: model.sizingMode,
                         state: tileState(for: display.id),
+                        isSelected: selection == display.id,
                         isLinking: linkPicking.isActive
                     )
                     .frame(width: rect.width, height: rect.height)
@@ -63,14 +70,24 @@ struct LayoutEditorView: View {
                         }
                     }
                     .onTapGesture(coordinateSpace: .local) { location in
-                        pickEdge(EdgeRef(displayID: display.id, edge: Self.nearestEdge(to: location, in: rect.size)))
+                        if linkPicking.isActive {
+                            pickEdge(EdgeRef(displayID: display.id, edge: Self.nearestEdge(to: location, in: rect.size)))
+                        } else {
+                            selection = display.id
+                        }
                     }
-                    .gesture(dragGesture(for: display, among: placed, transform: transform), including: linkPicking.isActive ? .none : .all)
+                    // `.subviews` keeps the tap above working while dragging is switched off.
+                    .gesture(dragGesture(for: display, among: placed, transform: transform), including: linkPicking.isActive ? .subviews : .all)
                     .position(x: rect.midX, y: rect.midY)
                 }
 
                 Group {
                     EdgeLines(segments: VirtualLayout.sharedEdges(of: frameList).map(transform.toCanvas), color: .green)
+                    ForEach(Array(model.walls), id: \.self) { wall in
+                        if let frame = frames[wall.displayID] {
+                            EdgeLines(segments: [transform.toCanvas(frame.segment(along: wall.edge))], color: .red, width: 5)
+                        }
+                    }
                     ForEach(model.links) { link in
                         if let a = frames[link.a.displayID], let b = frames[link.b.displayID] {
                             LinkLine(
@@ -81,7 +98,7 @@ struct LayoutEditorView: View {
                     }
                     ForEach(highlightedEdges, id: \.self) { ref in
                         if let frame = frames[ref.displayID] {
-                            EdgeLines(segments: [transform.toCanvas(frame.segment(along: ref.edge))], color: .orange, width: 6)
+                            EdgeLines(segments: [transform.toCanvas(frame.segment(along: ref.edge))], color: .orange, width: 7)
                         }
                     }
                     if let cursor, drag == nil {
@@ -98,6 +115,25 @@ struct LayoutEditorView: View {
         .clipped()
         .onReceive(cursorTimer) { _ in cursor = model.virtualCursorLocation() }
         .onChange(of: linkPicking) { hoveredEdge = nil }
+    }
+
+    /// Gaps the cursor actually jumps: walls and links take their edges out of the layout.
+    private func bridges(ids: [String], frames: [CGRect]) -> [CGRect] {
+        let reserved = model.walls.union(model.links.flatMap { [$0.a, $0.b] })
+        return frames.indices.flatMap { i -> [CGRect] in
+            let a = frames[i]
+            return [Edge.right, .bottom].flatMap { edge -> [CGRect] in
+                guard !reserved.contains(EdgeRef(displayID: ids[i], edge: edge)) else { return [] }
+                return VirtualLayout.facingStretches(from: i, edge: edge, in: frames)
+                    .filter { $0.gap > 0.5 && !reserved.contains(EdgeRef(displayID: ids[$0.targetIndex], edge: edge.opposite)) }
+                    .map { stretch in
+                        let length = stretch.span.upperBound - stretch.span.lowerBound
+                        return edge == .right
+                            ? CGRect(x: a.maxX, y: stretch.span.lowerBound, width: stretch.gap, height: length)
+                            : CGRect(x: stretch.span.lowerBound, y: a.maxY, width: length, height: stretch.gap)
+                    }
+            }
+        }
     }
 
     private var highlightedEdges: [EdgeRef] {
@@ -117,6 +153,7 @@ struct LayoutEditorView: View {
             linkPicking = .first
         case .second(let first):
             model.link(first, ref)
+            selection = first.displayID
             linkPicking = .off
         }
     }
@@ -137,7 +174,7 @@ struct LayoutEditorView: View {
     }
 
     private func dragGesture(for display: PlacedDisplay, among placed: [PlacedDisplay], transform: CanvasTransform) -> some Gesture {
-        DragGesture(minimumDistance: 1, coordinateSpace: .named(Self.canvasSpace))
+        DragGesture(minimumDistance: 8, coordinateSpace: .named(Self.canvasSpace))
             .onChanged { value in
                 var state = drag ?? DragState(
                     id: display.id,
@@ -153,6 +190,7 @@ struct LayoutEditorView: View {
                 state.frame = LayoutSnapping.snap(moved, to: others, threshold: Self.snapDistance / state.transform.scale)
                 state.overlaps = LayoutSnapping.overlaps(state.frame, others)
                 drag = state
+                selection = display.id
             }
             .onEnded { _ in
                 if let drag, !drag.overlaps {
@@ -162,6 +200,8 @@ struct LayoutEditorView: View {
             }
     }
 }
+
+private typealias Edge = CursorBridgeCore.Edge
 
 struct CanvasTransform {
     let origin: CGPoint
@@ -218,7 +258,7 @@ private struct LinkLine: View {
 
     var body: some View {
         ZStack {
-            EdgeLines(segments: [from, to], color: .orange)
+            EdgeLines(segments: [from, to], color: .orange, width: 5)
             Path { path in
                 path.move(to: from.midpoint)
                 path.addLine(to: to.midpoint)
@@ -235,9 +275,9 @@ private struct GapBridge: View {
 
     var body: some View {
         Rectangle()
-            .fill(Color.green.opacity(0.14))
-            .overlay(Rectangle().strokeBorder(Color.green.opacity(0.6), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
-            .frame(width: max(rect.width, 1), height: max(rect.height, 1))
+            .fill(Color.green.opacity(0.3))
+            .overlay(Rectangle().strokeBorder(Color.green.opacity(0.9), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])))
+            .frame(width: max(rect.width, 6), height: max(rect.height, 6))
             .position(x: rect.midX, y: rect.midY)
             .allowsHitTesting(false)
     }
@@ -251,13 +291,14 @@ private struct DisplayTile: View {
     let virtualSize: CGSize
     let mode: SizingMode
     let state: State
+    let isSelected: Bool
     let isLinking: Bool
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 6)
         shape
             .fill(fill)
-            .overlay(shape.strokeBorder(stroke, lineWidth: state == .idle ? 1 : 2))
+            .overlay(shape.strokeBorder(stroke, lineWidth: isSelected || state != .idle ? 3 : 1))
             .overlay(alignment: .top) {
                 if display.displayID == CGMainDisplayID() {
                     Rectangle()
@@ -281,7 +322,7 @@ private struct DisplayTile: View {
                 .padding(6)
             }
             .contentShape(shape)
-            .help(isLinking ? "Click an edge to link it" : "\(display.name) — drag to reposition")
+            .help(isLinking ? "Click near an edge to pick it" : "Click to select, drag to move")
     }
 
     private var sizeLabel: String {
@@ -295,7 +336,7 @@ private struct DisplayTile: View {
 
     private var fill: Color {
         switch state {
-        case .idle: Color.accentColor.opacity(0.28)
+        case .idle: Color.accentColor.opacity(isSelected ? 0.4 : 0.25)
         case .dragging: Color.accentColor.opacity(0.45)
         case .blocked: Color.red.opacity(0.35)
         }

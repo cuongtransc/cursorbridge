@@ -3,10 +3,12 @@ import CoreGraphics
 /// Decides where the cursor should be after a move, using the virtual layout instead of the macOS arrangement.
 ///
 /// When the cursor leaves a display through an edge, the first rule that applies wins:
-/// 1. an explicit `EdgeLink` on that edge;
-/// 2. a display touching that edge in the virtual layout;
-/// 3. with `jumpsGaps`, the nearest display facing that edge across empty space.
+/// 1. an explicit wall on that edge blocks it;
+/// 2. an explicit `EdgeLink` on that edge;
+/// 3. a display touching that edge in the virtual layout;
+/// 4. with `jumpsGaps`, the nearest display facing that edge across empty space.
 /// Otherwise the edge is a wall, even when macOS has a neighbouring display there.
+/// Walled and linked edges cannot be entered from the layout either, so each rule holds both ways.
 public struct CursorRouter: Sendable {
     public enum Decision: Equatable, Sendable {
         case pass
@@ -25,11 +27,15 @@ public struct CursorRouter: Sendable {
     public let displays: [PlacedDisplay]
     public let jumpsGaps: Bool
     public let links: [EdgeLink]
+    public let walls: Set<EdgeRef>
+    private let reservedEdges: Set<EdgeRef>
 
-    public init(displays: [PlacedDisplay], jumpsGaps: Bool = false, links: [EdgeLink] = []) {
+    public init(displays: [PlacedDisplay], jumpsGaps: Bool = false, links: [EdgeLink] = [], walls: Set<EdgeRef> = []) {
         self.displays = displays
         self.jumpsGaps = jumpsGaps
         self.links = links
+        self.walls = walls
+        self.reservedEdges = walls.union(links.flatMap { [$0.a, $0.b] })
     }
 
     /// - Parameters:
@@ -88,7 +94,7 @@ public struct CursorRouter: Sendable {
         } else if intended.y >= frame.maxY {
             exits.append((.bottom, CGPoint(x: clamped.x, y: intended.y)))
         }
-        for (edge, point) in exits {
+        for (edge, point) in exits where !walls.contains(EdgeRef(displayID: source.id, edge: edge)) {
             if let destination = linkedDestination(from: source, through: edge, at: point)
                 ?? facingDestination(from: source, through: edge, at: point) {
                 return destination
@@ -136,7 +142,7 @@ public struct CursorRouter: Sendable {
                 best = (hit.gap, target, hit.landing)
             }
         }
-        guard let best else { return nil }
+        guard let best, !reservedEdges.contains(EdgeRef(displayID: best.target.id, edge: edge.opposite)) else { return nil }
         return best.target.display.frame.clamping(best.target.fromVirtual(best.landing))
     }
 }

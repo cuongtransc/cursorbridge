@@ -242,3 +242,53 @@ private let grid = VirtualLayout.place([tl, tr, bl, br], origins: [:], mode: .lo
         #expect(router.route(from: CGPoint(x: -500, y: -1058), to: CGPoint(x: -500, y: -1062), delta: CGVector(dx: 0, dy: -4)) == .pass)
     }
 }
+
+@Suite struct WallTests {
+    @Test func wallBlocksATouchingNeighbour() {
+        let router = CursorRouter(displays: grid, walls: [EdgeRef(displayID: "TL", edge: .right)])
+        let decision = router.route(from: CGPoint(x: 998, y: 500), to: CGPoint(x: 1003, y: 500), delta: CGVector(dx: 5, dy: 0))
+        #expect(decision == .warp(to: CGPoint(x: 999, y: 500)))
+    }
+
+    @Test func wallHoldsFromTheOtherSideToo() {
+        let router = CursorRouter(displays: grid, walls: [EdgeRef(displayID: "TL", edge: .right)])
+        let decision = router.route(from: CGPoint(x: 1002, y: 500), to: CGPoint(x: 998, y: 500), delta: CGVector(dx: -4, dy: 0))
+        #expect(decision == .warp(to: CGPoint(x: 1000, y: 500)))
+    }
+
+    @Test func linkedEdgeIsOnlyReachableThroughItsLink() {
+        let link = EdgeLink(EdgeRef(displayID: "TR", edge: .bottom), EdgeRef(displayID: "BL", edge: .top))
+        let router = CursorRouter(displays: grid, links: [link])
+        let decision = router.route(from: CGPoint(x: 500, y: 1002), to: CGPoint(x: 500, y: 998), delta: CGVector(dx: 0, dy: -4))
+        #expect(decision == .warp(to: CGPoint(x: 1500, y: 799)))
+    }
+}
+
+@Suite struct FacingTests {
+    @Test func touchingStretchStopsWhereTheNeighbourEnds() {
+        let frames = grid.map(\.virtualFrame)
+        #expect(VirtualLayout.facingStretches(from: 0, edge: .right, in: frames) == [FacingStretch(targetIndex: 1, span: 0..<800, gap: 0)])
+    }
+
+    @Test func gapStretchCarriesItsWidth() {
+        let frames = grid.map(\.virtualFrame)
+        #expect(VirtualLayout.facingStretches(from: 1, edge: .bottom, in: frames) == [FacingStretch(targetIndex: 3, span: 1000..<2000, gap: 200)])
+    }
+}
+
+/// Events recorded on the desk right after a jump from display 4 into display 1 at (-15, -814.1).
+@Suite struct PendingMoveTests {
+    private let move = PendingMove(target: CGPoint(x: -15, y: -814.1), postedAt: 1_000)
+
+    @Test func eventStillAtTheOldEdgeIsStale() {
+        #expect(move.isStale(location: CGPoint(x: 36, y: -811.3), delta: CGVector(dx: -3, dy: 3), now: 4_000_000))
+    }
+
+    @Test func eventNearTheTargetIsNotStale() {
+        #expect(!move.isStale(location: CGPoint(x: -18, y: -812), delta: CGVector(dx: -3, dy: 2), now: 4_000_000))
+    }
+
+    @Test func moveThatNeverLandsStopsFilteringAfterItsLifetime() {
+        #expect(!move.isStale(location: CGPoint(x: 36, y: -811.3), delta: CGVector(dx: -3, dy: 3), now: 1_000 + PendingMove.lifetimeNanoseconds))
+    }
+}
