@@ -33,10 +33,12 @@ PASS="$(openssl rand -hex 16)"
 openssl req -x509 -newkey rsa:3072 -nodes -days 3650 -subj "/CN=$LOCAL_IDENTITY" \
     -config "$WORK/cert.cnf" -extensions ext -keyout "$WORK/key.pem" -out "$WORK/cert.pem" 2>/dev/null
 # macOS `security` only reads the legacy PKCS#12 encryption; LibreSSL has no -legacy flag and uses it anyway.
-openssl pkcs12 -export -legacy -inkey "$WORK/key.pem" -in "$WORK/cert.pem" -out "$WORK/id.p12" -passout "pass:$PASS" 2>/dev/null \
-    || openssl pkcs12 -export -inkey "$WORK/key.pem" -in "$WORK/cert.pem" -out "$WORK/id.p12" -passout "pass:$PASS"
+# Keychain prompts name the key after the imported file, so the file carries the identity's name.
+P12="$WORK/$LOCAL_IDENTITY.p12"
+openssl pkcs12 -export -legacy -name "$LOCAL_IDENTITY" -inkey "$WORK/key.pem" -in "$WORK/cert.pem" -out "$P12" -passout "pass:$PASS" 2>/dev/null \
+    || openssl pkcs12 -export -name "$LOCAL_IDENTITY" -inkey "$WORK/key.pem" -in "$WORK/cert.pem" -out "$P12" -passout "pass:$PASS"
 # Only codesign may use the key without asking; anything else gets a keychain prompt.
-security import "$WORK/id.p12" -k "$KEYCHAIN" -P "$PASS" -T /usr/bin/codesign >/dev/null
+security import "$P12" -k "$KEYCHAIN" -P "$PASS" -T /usr/bin/codesign >/dev/null
 
 echo "Created signing identity \"$LOCAL_IDENTITY\" in $KEYCHAIN"
 echo "The first build may ask for your keychain password; choose Always Allow."
