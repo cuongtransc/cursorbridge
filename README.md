@@ -27,24 +27,29 @@ bar and Mission Control keep using the macOS arrangement; only cursor travel is 
 
 ## Build and run
 
-Requires macOS 14+ and the Swift 6 toolchain (Xcode or Command Line Tools).
+Requires macOS 14+, the Swift 6 toolchain (Xcode or Command Line Tools) and [mise](https://mise.jdx.dev).
 
 ```bash
-make test      # unit tests for the routing logic
-make run       # build build/CursorBridge.app and launch it
-make install   # copy to ~/Applications and launch
+mise run setup         # once: local signing identity and the pre-commit hook
+mise run test          # unit tests for the routing logic
+mise run dev           # build build/CursorBridge.app and launch it
+mise run app:install   # copy to ~/Applications and launch
+mise run ci            # the gate the pre-commit hook runs
 ```
 
 On first launch macOS asks for **Accessibility** access (needed to watch and move the cursor). Grant it in
 System Settings › Privacy & Security › Accessibility; routing starts automatically.
 
-The app is ad-hoc signed by default, and macOS ties the Accessibility grant to the signature, so after a
-rebuild you need to remove CursorBridge from the Accessibility list and add it again. To avoid that, sign
-with a real certificate:
+macOS ties the Accessibility grant to the app's signature. `mise run setup` creates a self-signed
+"CursorBridge Local Signing" identity in your login keychain; builds signed with it keep the grant across
+rebuilds, and no other binary can claim it without that private key. The first build may ask for your
+keychain password (choose *Always Allow*). To sign with another certificate:
 
 ```bash
-CODESIGN_IDENTITY="Apple Development: you@example.com" make install
+CODESIGN_IDENTITY="Apple Development: you@example.com" mise run app:install
 ```
+
+Without either, the build is ad-hoc signed and the grant has to be given again after every rebuild.
 
 ## How it works
 

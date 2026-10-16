@@ -1,0 +1,66 @@
+min_version = "2026.9.0"
+
+# Swift comes from Xcode or the Command Line Tools, not mise; scripts/swift-env.sh handles CLT-only installs.
+
+[tasks.setup]
+description = "One-time setup: local signing identity and the git pre-commit hook"
+run = """
+set -eu
+scripts/create-signing-cert.sh
+hooks_dir=$(git config --global --get core.hooksPath) || hooks_dir=
+case "$hooks_dir" in
+  "~") hooks_dir=$HOME ;;
+  "~/"*) hooks_dir="$HOME/${hooks_dir#"~/"}" ;;
+esac
+if [ -n "$hooks_dir" ] && [ -x "$hooks_dir/ct-hook-dispatch" ]; then
+  [ "$(git config --local --get core.hooksPath)" = ".githooks" ] && git config --local --unset core.hooksPath
+  echo 'git hooks: global dispatcher runs .githooks'
+else
+  git config core.hooksPath .githooks
+fi
+echo 'Next: mise run dev'
+"""
+
+[tasks.build]
+description = "Build and sign build/CursorBridge.app"
+run = "scripts/build-app.sh"
+
+[tasks.test]
+description = "Unit tests for the routing logic"
+run = "scripts/test.sh"
+
+# Sequential: SwiftPM holds a lock on .build, so parallel steps would only wait on each other.
+[tasks.ci]
+description = "The gate: unit tests, then compile every target"
+run = """
+set -euo pipefail
+scripts/test.sh
+source scripts/swift-env.sh
+swift build ${SWIFT_FLAGS[@]+"${SWIFT_FLAGS[@]}"}
+"""
+shell = "bash -c"
+
+[tasks.dev]
+description = "Build the app and relaunch it from build/"
+depends = ["build"]
+run = """
+set -e
+pkill -x CursorBridge || true
+open build/CursorBridge.app
+"""
+
+[tasks."app:install"]
+description = "Build, copy to ~/Applications and relaunch"
+depends = ["build"]
+run = """
+set -e
+pkill -x CursorBridge || true
+mkdir -p "$HOME/Applications"
+rm -rf "$HOME/Applications/CursorBridge.app"
+cp -R build/CursorBridge.app "$HOME/Applications/"
+open "$HOME/Applications/CursorBridge.app"
+"""
+
+[tasks.clean]
+description = "Delete SwiftPM and app build output"
+run = "rm -rf .build build"
