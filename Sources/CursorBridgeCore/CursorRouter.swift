@@ -28,13 +28,16 @@ public struct CursorRouter: Sendable {
     public let jumpsGaps: Bool
     public let links: [EdgeLink]
     public let walls: Set<EdgeRef>
+    /// Where no display faces an edge straight on, land on the nearest display lying beyond it.
+    public let reachesSideways: Bool
     private let reservedEdges: Set<EdgeRef>
 
-    public init(displays: [PlacedDisplay], jumpsGaps: Bool = false, links: [EdgeLink] = [], walls: Set<EdgeRef> = []) {
+    public init(displays: [PlacedDisplay], jumpsGaps: Bool = false, links: [EdgeLink] = [], walls: Set<EdgeRef> = [], reachesSideways: Bool = false) {
         self.displays = displays
         self.jumpsGaps = jumpsGaps
         self.links = links
         self.walls = walls
+        self.reachesSideways = reachesSideways
         self.reservedEdges = walls.union(links.flatMap { [$0.a, $0.b] })
     }
 
@@ -124,6 +127,7 @@ public struct CursorRouter: Sendable {
         let maximumGap = jumpsGaps ? CGFloat.infinity : tolerance
 
         var best: (gap: CGFloat, target: PlacedDisplay, landing: CGPoint)?
+        var facesAnything = false
         for target in displays where target.id != source.id {
             let t = target.virtualFrame
             let hit: (gap: CGFloat, landing: CGPoint)? = switch edge {
@@ -138,9 +142,26 @@ public struct CursorRouter: Sendable {
             default:
                 nil
             }
+            facesAnything = facesAnything || hit != nil
             if let hit, hit.gap <= maximumGap, hit.gap < (best?.gap ?? .infinity) {
                 best = (hit.gap, target, hit.landing)
             }
+        }
+        // Only where nothing faces the edge at all: a gap left as a wall must stay one.
+        if !facesAnything, reachesSideways,
+           let index = displays.firstIndex(where: { $0.id == source.id }),
+           let nearest = VirtualLayout.nearestBeyond(from: index, edge: edge, at: v, in: displays.map(\.virtualFrame)) {
+            let target = displays[nearest]
+            let t = target.virtualFrame
+            let x = Swift.min(Swift.max(v.x, t.minX), t.maxX)
+            let y = Swift.min(Swift.max(v.y, t.minY), t.maxY)
+            let landing = switch edge {
+            case .right: CGPoint(x: t.minX + (v.x - s.maxX), y: y)
+            case .left: CGPoint(x: t.maxX - (s.minX - v.x), y: y)
+            case .bottom: CGPoint(x: x, y: t.minY + (v.y - s.maxY))
+            case .top: CGPoint(x: x, y: t.maxY - (s.minY - v.y))
+            }
+            best = (0, target, landing)
         }
         guard let best, !reservedEdges.contains(EdgeRef(displayID: best.target.id, edge: edge.opposite)) else { return nil }
         return best.target.display.frame.clamping(best.target.fromVirtual(best.landing))

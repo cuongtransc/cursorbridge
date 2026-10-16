@@ -14,6 +14,7 @@ struct StoredSettings: Codable, Equatable {
     var jumpsGaps = true
     var links: [EdgeLink] = []
     var walls: [EdgeRef] = []
+    var reachesSideways = false
 
     init() {}
 
@@ -26,6 +27,7 @@ struct StoredSettings: Codable, Equatable {
         jumpsGaps = try container.decodeIfPresent(Bool.self, forKey: .jumpsGaps) ?? defaults.jumpsGaps
         links = try container.decodeIfPresent([EdgeLink].self, forKey: .links) ?? defaults.links
         walls = try container.decodeIfPresent([EdgeRef].self, forKey: .walls) ?? defaults.walls
+        reachesSideways = try container.decodeIfPresent(Bool.self, forKey: .reachesSideways) ?? defaults.reachesSideways
     }
 }
 
@@ -101,6 +103,11 @@ final class AppModel {
         set { settings.jumpsGaps = newValue }
     }
 
+    var reachesSideways: Bool {
+        get { settings.reachesSideways }
+        set { settings.reachesSideways = newValue }
+    }
+
     var links: [EdgeLink] { settings.links }
     var walls: Set<EdgeRef> { Set(settings.walls) }
 
@@ -154,6 +161,17 @@ final class AppModel {
             else { continue }
             let destination = EdgeDestination(display: target.display, acrossGap: acrossGap)
             if !destinations.contains(destination) { destinations.append(destination) }
+        }
+        // The router reaches sideways from whatever part of the edge faces nothing.
+        let frame = placed[index].virtualFrame
+        let length = edge.edge == .left || edge.edge == .right ? frame.height : frame.width
+        let faced = VirtualLayout.facingStretches(from: index, edge: edge.edge, in: placed.map(\.virtualFrame))
+            .reduce(0) { $0 + $1.span.upperBound - $1.span.lowerBound }
+        if reachesSideways, faced < length - 1,
+           let nearest = VirtualLayout.nearestBeyond(from: index, edge: edge.edge, in: placed.map(\.virtualFrame)),
+           !reserved.contains(EdgeRef(displayID: placed[nearest].id, edge: edge.edge.opposite)),
+           !destinations.contains(where: { $0.display.id == placed[nearest].id }) {
+            destinations.append(EdgeDestination(display: placed[nearest].display, acrossGap: true))
         }
         return destinations
     }
@@ -230,7 +248,7 @@ final class AppModel {
             isIntercepting = false
             return
         }
-        interceptor.router = CursorRouter(displays: placedDisplays, jumpsGaps: jumpsGaps, links: links, walls: walls)
+        interceptor.router = CursorRouter(displays: placedDisplays, jumpsGaps: jumpsGaps, links: links, walls: walls, reachesSideways: reachesSideways)
         let wasIntercepting = isIntercepting
         isIntercepting = interceptor.start()
         if isIntercepting != wasIntercepting || !isIntercepting {

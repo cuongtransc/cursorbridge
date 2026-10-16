@@ -112,6 +112,10 @@ private struct Sidebar: View {
                 Text("When an edge touches nothing, move the cursor to the nearest display facing it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Toggle("Reach displays off to the side", isOn: $model.reachesSideways)
+                Text("When no display faces an edge at all, move the cursor to the nearest display beyond it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Picker("Size displays by", selection: $model.sizingMode) {
                     Text("Resolution").tag(SizingMode.logical)
                     Text("Physical size").tag(SizingMode.physical)

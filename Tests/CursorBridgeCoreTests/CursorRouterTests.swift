@@ -292,3 +292,74 @@ private let grid = VirtualLayout.place([tl, tr, bl, br], origins: [:], mode: .lo
         #expect(!move.isStale(location: CGPoint(x: 36, y: -811.3), delta: CGVector(dx: -3, dy: 3), now: 1_000 + PendingMove.lifetimeNanoseconds))
     }
 }
+
+/// Two monitors side by side above a narrower laptop, as macOS reports them. Only the laptop's
+/// 0..<1728 span has a display straight above it; the monitors' outer parts face nothing.
+@Suite struct SidewaysTests {
+    private let left = display("L", CGRect(x: -1696, y: -1440, width: 2560, height: 1440))
+    private let right = display("R", CGRect(x: 864, y: -1440, width: 2560, height: 1440))
+    private let laptop = display("P", CGRect(x: 0, y: 0, width: 1728, height: 1117))
+
+    private func router(reachesSideways: Bool, walls: Set<EdgeRef> = []) -> CursorRouter {
+        CursorRouter(
+            displays: VirtualLayout.place([left, right, laptop], origins: [:], mode: .logical),
+            jumpsGaps: true,
+            walls: walls,
+            reachesSideways: reachesSideways
+        )
+    }
+
+    private func pushDown(at x: CGFloat) -> (from: CGPoint, to: CGPoint, delta: CGVector) {
+        (CGPoint(x: x, y: -3), CGPoint(x: x, y: -1.0 / 64), CGVector(dx: 0, dy: 4))
+    }
+
+    @Test func outerEdgeIsAWallWithoutTheOption() {
+        let move = pushDown(at: -1000)
+        #expect(router(reachesSideways: false).route(from: move.from, to: move.to, delta: move.delta) == .pass)
+    }
+
+    @Test func leftMonitorReachesTheLaptopsNearestCorner() {
+        let move = pushDown(at: -1000)
+        #expect(router(reachesSideways: true).route(from: move.from, to: move.to, delta: move.delta)
+            == .warp(to: CGPoint(x: 0, y: 3.984375)))
+    }
+
+    @Test func rightMonitorReachesTheLaptopsNearestCorner() {
+        let move = pushDown(at: 3000)
+        #expect(router(reachesSideways: true).route(from: move.from, to: move.to, delta: move.delta)
+            == .warp(to: CGPoint(x: 1727, y: 3.984375)))
+    }
+
+    @Test func displayStraightBelowStillWins() {
+        let router = router(reachesSideways: true)
+        #expect(router.route(from: CGPoint(x: 500, y: -2), to: CGPoint(x: 500, y: 2), delta: CGVector(dx: 0, dy: 4)) == .pass)
+    }
+
+    @Test func walledTargetEdgeStillHolds() {
+        let move = pushDown(at: -1000)
+        let router = router(reachesSideways: true, walls: [EdgeRef(displayID: "P", edge: .top)])
+        #expect(router.route(from: move.from, to: move.to, delta: move.delta) == .pass)
+    }
+
+    @Test func gapLeftAsAWallIsNotBypassedSideways() {
+        // Gap jumping off: the laptop straight below, across a gap, must stay unreachable.
+        let gapped = ["L": CGPoint(x: -1696, y: -1440), "R": CGPoint(x: 864, y: -1440), "P": CGPoint(x: 0, y: 200)]
+        let router = CursorRouter(
+            displays: VirtualLayout.place([left, right, laptop], origins: gapped, mode: .logical),
+            reachesSideways: true
+        )
+        let move = pushDown(at: 500)
+        #expect(router.route(from: move.from, to: move.to, delta: move.delta) == .pass)
+    }
+
+    @Test func sidewaysReachDoesNotGoBackwards() {
+        // Pushing up from the top of a monitor: nothing lies above, so nothing is reached.
+        let router = router(reachesSideways: true)
+        #expect(router.route(from: CGPoint(x: -1000, y: -1437), to: CGPoint(x: -1000, y: -1440), delta: CGVector(dx: 0, dy: -4)) == .pass)
+    }
+
+    @Test func laptopIsTheNearestDisplayBelowTheLeftMonitor() {
+        let placed = VirtualLayout.place([left, right, laptop], origins: [:], mode: .logical)
+        #expect(VirtualLayout.nearestBeyond(from: 0, edge: .bottom, in: placed.map(\.virtualFrame)) == 2)
+    }
+}

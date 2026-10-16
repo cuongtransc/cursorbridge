@@ -68,6 +68,12 @@ extension CGRect {
         let dy = Swift.max(minY - point.y, 0, point.y - maxY)
         return hypot(dx, dy)
     }
+
+    func distance(to other: CGRect) -> CGFloat {
+        let dx = Swift.max(minX - other.maxX, 0, other.minX - maxX)
+        let dy = Swift.max(minY - other.maxY, 0, other.minY - maxY)
+        return hypot(dx, dy)
+    }
 }
 
 extension CGPoint {

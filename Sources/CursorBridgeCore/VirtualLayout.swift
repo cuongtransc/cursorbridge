@@ -101,6 +101,27 @@ public enum VirtualLayout {
         return stretches
     }
 
+    /// The display lying wholly beyond `edge` of frame `index` that is nearest to `point`, or to the
+    /// frame itself when `point` is nil. Used where no display faces the edge straight on.
+    public static func nearestBeyond(from index: Int, edge: Edge, at point: CGPoint? = nil, in frames: [CGRect], tolerance: CGFloat = 0.5) -> Int? {
+        let a = frames[index]
+        var best: (index: Int, distance: CGFloat)?
+        for (j, b) in frames.enumerated() where j != index {
+            let beyond = switch edge {
+            case .right: b.minX >= a.maxX - tolerance
+            case .left: b.maxX <= a.minX + tolerance
+            case .bottom: b.minY >= a.maxY - tolerance
+            case .top: b.maxY <= a.minY + tolerance
+            }
+            guard beyond else { continue }
+            let distance = point.map { b.distance(to: $0) } ?? b.distance(to: a)
+            if distance < (best?.distance ?? .infinity) {
+                best = (j, distance)
+            }
+        }
+        return best?.index
+    }
+
     /// The empty regions the cursor jumps across when gap jumping is on.
     public static func gapBridges(of frames: [CGRect], tolerance: CGFloat = 0.5) -> [CGRect] {
         frames.indices.flatMap { i in
