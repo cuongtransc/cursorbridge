@@ -14,6 +14,9 @@ bar and Mission Control keep using the macOS arrangement; only cursor travel is 
   A red dot tracks the live cursor so you can check the mapping.
 - **Jump across gaps**: when an edge touches nothing, the cursor lands on the nearest display facing it,
   however wide the gap. Bridged gaps are shaded in the editor. Turn it off to make such edges walls.
+- **Reach displays off to the side**: where nothing at all faces an edge (the outer parts of two monitors
+  above a narrower laptop), the cursor goes to the nearest display in that direction and lands at its
+  closest point. One switch covers every display; gaps left as walls stay walls. Off by default.
 - **Edge links**: click *Link Edges…*, then an edge on one display and an edge on another. The two edges
   are joined end to end: halfway along one lands halfway along the other. A link overrides the layout for
   that edge, so it also works for displays that don't face each other, or to wrap from the far right of the

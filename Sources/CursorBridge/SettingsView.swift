@@ -10,6 +10,8 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            Toolbar(model: model)
+            Divider()
             if !model.isTrusted {
                 PermissionBanner()
             }
@@ -17,7 +19,7 @@ struct SettingsView: View {
                 canvas
                 Divider()
                 Sidebar(model: model, selection: $selection, linkPicking: $linkPicking)
-                    .frame(width: 340)
+                    .frame(width: 360)
             }
         }
         .frame(minWidth: 980, minHeight: 600)
@@ -36,31 +38,59 @@ struct SettingsView: View {
     }
 
     private var canvas: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Toggle("Cursor routing", isOn: $model.isEnabled)
-                    .toggleStyle(.switch)
-                    .fixedSize()
-                Spacer()
-                Button("Identify Displays", systemImage: "number.square") { DisplayIdentifier.flash(model.displays) }
-                Button(linkPicking.isActive ? "Cancel Linking" : "Link Edges…", systemImage: "link") {
-                    linkPicking = linkPicking.isActive ? .off : .first
-                }
-                Button("Reset Layout", systemImage: "arrow.counterclockwise") { model.resetLayout() }
-                    .help("Put displays back where System Settings has them.")
-            }
-            .padding(12)
-            Divider()
+        VStack(alignment: .leading, spacing: 0) {
             if linkPicking.isActive {
                 LinkPickingBanner(picking: $linkPicking)
+            } else {
+                Text("Drag displays to arrange them for the cursor. Click a display to choose what each of its edges does.")
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
             }
             LayoutEditorView(model: model, selection: $selection, linkPicking: $linkPicking)
                 .background(Color(nsColor: .underPageBackgroundColor))
             Divider()
-            Legend(showsGaps: model.jumpsGaps)
+            Legend(showsGaps: model.jumpsGaps, showsSideways: model.reachesSideways)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
         }
+    }
+}
+
+private struct Toolbar: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(nsImage: AppIcon.image(size: 22))
+            Text("CursorBridge")
+                .font(.headline)
+            StatusPill(status: model.status)
+            Spacer()
+            Button("Identify Displays", systemImage: "number.square") { DisplayIdentifier.flash(model.displays) }
+            Button("Reset to macOS Layout", systemImage: "arrow.counterclockwise") { model.resetLayout() }
+                .help("Put displays back where System Settings › Displays has them.")
+            Toggle("Routing", isOn: $model.isEnabled)
+                .toggleStyle(.switch)
+                .fixedSize()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+}
+
+struct StatusPill: View {
+    let status: RoutingStatus
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle().fill(status.color).frame(width: 8, height: 8)
+            Text(status.title)
+        }
+        .font(.callout.weight(.medium))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(status.color.opacity(0.15), in: Capsule())
     }
 }
 
@@ -71,29 +101,33 @@ private struct Sidebar: View {
 
     var body: some View {
         Form {
-            if let display = selection.flatMap(model.display(withID:)) {
-                Section {
-                    ForEach([Edge.top, .bottom, .left, .right], id: \.self) { edge in
-                        EdgeRuleRow(model: model, edge: EdgeRef(displayID: display.id, edge: edge))
-                    }
-                } header: {
-                    Text("\(model.number(of: display))  \(display.name)")
-                        .font(.headline)
-                } footer: {
-                    Text("\(Int(display.frame.width)) × \(Int(display.frame.height)) pt")
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                Section("Edges") {
-                    Text("Select a display on the left to choose what each of its edges does: follow the layout, act as a wall, or link to another display's edge.")
-                        .foregroundStyle(.secondary)
-                }
+            Section {
+                OptionRow(
+                    title: "Jump across gaps",
+                    detail: "A display straight across an empty gap still counts as next door.",
+                    illustration: .gap,
+                    isOn: $model.jumpsGaps
+                )
+                OptionRow(
+                    title: "Reach displays off to the side",
+                    detail: "Where nothing is straight across, go to the nearest display in that direction. Covers every display at once.",
+                    illustration: .sideways,
+                    isOn: $model.reachesSideways
+                )
+            } header: {
+                Text("Edges with nothing next to them")
+            } footer: {
+                Text("Everything else with nothing next to it is a wall.")
+                    .foregroundStyle(.secondary)
             }
 
-            Section("Links and Walls") {
+            Section {
                 if model.links.isEmpty && model.walls.isEmpty {
-                    Text("None yet. Use an edge's menu above, or Link Edges… to click two edges on the canvas.")
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("No custom rules").fontWeight(.semibold)
+                        Text("Only needed for one specific path, such as wrapping from the far right back to the far left. A link takes over both edges: each then accepts the cursor only from its partner.")
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 ForEach(model.links) { link in
                     OverrideRow(title: "\(describe(link.a))  ↔  \(describe(link.b))", systemImage: "link", tint: .orange) {
@@ -105,13 +139,18 @@ private struct Sidebar: View {
                         model.removeWall(wall)
                     }
                 }
+            } header: {
+                HStack {
+                    Text("Custom rules")
+                    Spacer()
+                    Button(linkPicking.isActive ? "Cancel Linking" : "Link Two Edges…", systemImage: "link") {
+                        linkPicking = linkPicking.isActive ? .off : .first
+                    }
+                    .controlSize(.small)
+                }
             }
 
-            Section("Options") {
-                Toggle("Jump across gaps", isOn: $model.jumpsGaps)
-                Text("When an edge touches nothing, move the cursor to the nearest display facing it.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            Section("General") {
                 Picker("Size displays by", selection: $model.sizingMode) {
                     Text("Resolution").tag(SizingMode.logical)
                     Text("Physical size").tag(SizingMode.physical)
@@ -121,6 +160,25 @@ private struct Sidebar: View {
                     set: { model.setLaunchAtLogin($0) }
                 ))
             }
+
+            if let display = selection.flatMap(model.display(withID:)) {
+                Section {
+                    ForEach([Edge.top, .bottom, .left, .right], id: \.self) { edge in
+                        EdgeRuleRow(model: model, edge: EdgeRef(displayID: display.id, edge: edge))
+                    }
+                } header: {
+                    Text("\(model.number(of: display)) · \(display.name)")
+                } footer: {
+                    Text("\(Int(display.frame.width)) × \(Int(display.frame.height)) pt")
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Section("Edges of one display") {
+                    Text("Click a display on the left to see where each of its edges leads, or to make one a wall.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
         }
         .formStyle(.grouped)
     }
@@ -128,6 +186,67 @@ private struct Sidebar: View {
     private func describe(_ edge: EdgeRef) -> String {
         guard let display = model.display(withID: edge.displayID) else { return "Disconnected · \(edge.edge.title)" }
         return "\(model.number(of: display)) \(edge.edge.title)"
+    }
+}
+
+private struct OptionRow: View {
+    let title: String
+    let detail: String
+    let illustration: OptionIllustration.Kind
+    @Binding var isOn: Bool
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            OptionIllustration(kind: illustration)
+                .frame(width: 56, height: 40)
+            VStack(alignment: .leading, spacing: 3) {
+                Toggle(isOn: $isOn) {
+                    Text(title).fontWeight(.semibold)
+                }
+                Text(detail)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+/// Small drawings that show what an option does, in the canvas's own colours.
+private struct OptionIllustration: View {
+    enum Kind { case gap, sideways }
+    let kind: Kind
+
+    var body: some View {
+        Canvas { context, _ in
+            let outline = GraphicsContext.Shading.color(.secondary)
+            func screen(_ rect: CGRect) {
+                let path = Path(roundedRect: rect, cornerRadius: 2)
+                context.fill(path, with: .color(Color(nsColor: .textBackgroundColor)))
+                context.stroke(path, with: outline, lineWidth: 1.5)
+            }
+            switch kind {
+            case .gap:
+                screen(CGRect(x: 2, y: 8, width: 20, height: 24))
+                screen(CGRect(x: 34, y: 8, width: 20, height: 24))
+                var line = Path()
+                line.move(to: CGPoint(x: 23, y: 20))
+                line.addLine(to: CGPoint(x: 33, y: 20))
+                context.stroke(line, with: .color(EdgeColors.gap), style: StrokeStyle(lineWidth: 3, dash: [3, 2]))
+            case .sideways:
+                screen(CGRect(x: 2, y: 2, width: 24, height: 14))
+                screen(CGRect(x: 30, y: 24, width: 18, height: 14))
+                var arrow = Path()
+                arrow.move(to: CGPoint(x: 8, y: 17))
+                arrow.addCurve(to: CGPoint(x: 29, y: 28), control1: CGPoint(x: 10, y: 26), control2: CGPoint(x: 22, y: 28))
+                arrow.move(to: CGPoint(x: 25, y: 25))
+                arrow.addLine(to: CGPoint(x: 30, y: 28))
+                arrow.addLine(to: CGPoint(x: 25, y: 31))
+                context.stroke(arrow, with: .color(EdgeColors.sideways), lineWidth: 1.8)
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 
@@ -169,7 +288,7 @@ private struct EdgeRuleRow: View {
             let destinations = model.automaticDestinations(for: edge)
             guard !destinations.isEmpty else { return "Nothing here, so the cursor stops." }
             return "Leads to " + destinations.map { destination in
-                "\(model.number(of: destination.display))" + (destination.acrossGap ? " (across a gap)" : "")
+                "\(model.number(of: destination.display))" + destination.route.note
             }.formatted(.list(type: .and)) + "."
         }
     }
@@ -196,21 +315,36 @@ private struct OverrideRow: View {
 
 private struct Legend: View {
     let showsGaps: Bool
+    let showsSideways: Bool
 
     var body: some View {
         HStack(spacing: 16) {
-            LegendItem(color: .green, text: "Touching")
+            LegendItem(color: EdgeColors.touching, text: "Edges touch")
             if showsGaps {
-                LegendItem(color: .green.opacity(0.5), text: "Gap jumped", dashed: true)
+                LegendItem(color: EdgeColors.gap, text: "Jumps a gap", dashed: true)
             }
-            LegendItem(color: .orange, text: "Linked")
-            LegendItem(color: .red, text: "Wall")
+            if showsSideways {
+                LegendItem(color: EdgeColors.sideways, text: "Reaches sideways", dashed: true)
+            }
+            LegendItem(color: EdgeColors.link, text: "Linked")
+            LegendItem(color: EdgeColors.wall, text: "Wall")
+            HStack(spacing: 6) {
+                Circle().fill(.red).frame(width: 8, height: 8)
+                Text("Your cursor")
+            }
             Spacer()
-            Text("Unmarked edges are walls. Click a display to change its edges; drag to move it.")
-                .foregroundStyle(.secondary)
         }
         .font(.caption)
     }
+}
+
+/// One colour per way an edge can lead somewhere, shared by the canvas, legend and illustrations.
+enum EdgeColors {
+    static let touching = Color.green
+    static let gap = Color.green.opacity(0.6)
+    static let sideways = Color.teal
+    static let link = Color.orange
+    static let wall = Color.red
 }
 
 private struct LegendItem: View {
@@ -257,6 +391,16 @@ private struct PermissionBanner: View {
         }
         .padding(12)
         .background(.yellow.opacity(0.15))
+    }
+}
+
+private extension EdgeDestination.Route {
+    var note: String {
+        switch self {
+        case .touching: ""
+        case .acrossGap: " (across a gap)"
+        case .sideways: " (off to the side)"
+        }
     }
 }
 

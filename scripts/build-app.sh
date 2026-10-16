@@ -15,6 +15,12 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/CursorBridge" "$APP/Contents/MacOS/CursorBridge"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 
+# The icon is drawn by the app's own code (AppIcon.swift), so it is rendered here rather than committed.
+ICONSET="$(mktemp -d)/AppIcon.iconset"
+trap 'rm -rf "$(dirname "$ICONSET")"' EXIT
+"$BIN_DIR/CursorBridge" --write-iconset "$ICONSET"
+iconutil -c icns -o "$APP/Contents/Resources/AppIcon.icns" "$ICONSET"
+
 # Accessibility grants are checked against the app's designated requirement. A certificate-signed build's
 # requirement names the certificate, so the grant survives rebuilds. An ad-hoc build's is its cdhash, which
 # changes on every build; it is kept that way because a requirement of the bundle identifier alone would

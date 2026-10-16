@@ -101,6 +101,55 @@ public enum VirtualLayout {
         return stretches
     }
 
+    /// The display lying wholly beyond `edge` of frame `index` that is nearest to `point`, or to the
+    /// frame itself when `point` is nil. Used where no display faces the edge straight on.
+    public static func nearestBeyond(from index: Int, edge: Edge, at point: CGPoint? = nil, in frames: [CGRect], tolerance: CGFloat = 0.5) -> Int? {
+        let a = frames[index]
+        var best: (index: Int, distance: CGFloat)?
+        for (j, b) in frames.enumerated() where j != index {
+            let beyond = switch edge {
+            case .right: b.minX >= a.maxX - tolerance
+            case .left: b.maxX <= a.minX + tolerance
+            case .bottom: b.minY >= a.maxY - tolerance
+            case .top: b.maxY <= a.minY + tolerance
+            }
+            guard beyond else { continue }
+            let distance = point.map { b.distance(to: $0) } ?? b.distance(to: a)
+            if distance < (best?.distance ?? .infinity) {
+                best = (j, distance)
+            }
+        }
+        return best?.index
+    }
+
+    /// The stretches of every edge that face no display at all, each with the display the cursor
+    /// reaches from there when it reaches sideways.
+    public static func sidewaysReaches(in frames: [CGRect], tolerance: CGFloat = 0.5) -> [SidewaysReach] {
+        var reaches: [SidewaysReach] = []
+        for i in frames.indices {
+            let a = frames[i]
+            for edge in Edge.allCases {
+                var open = edge.runsVertically ? [a.minY..<a.maxY] : [a.minX..<a.maxX]
+                for stretch in facingStretches(from: i, edge: edge, in: frames, tolerance: tolerance) {
+                    open = open.flatMap { $0.subtracting(stretch.span) }
+                }
+                for span in open where span.upperBound - span.lowerBound > tolerance {
+                    let mid = (span.lowerBound + span.upperBound) / 2
+                    let point = switch edge {
+                    case .top: CGPoint(x: mid, y: a.minY)
+                    case .bottom: CGPoint(x: mid, y: a.maxY)
+                    case .left: CGPoint(x: a.minX, y: mid)
+                    case .right: CGPoint(x: a.maxX, y: mid)
+                    }
+                    if let target = nearestBeyond(from: i, edge: edge, at: point, in: frames, tolerance: tolerance) {
+                        reaches.append(SidewaysReach(sourceIndex: i, edge: edge, span: span, targetIndex: target))
+                    }
+                }
+            }
+        }
+        return reaches
+    }
+
     /// The empty regions the cursor jumps across when gap jumping is on.
     public static func gapBridges(of frames: [CGRect], tolerance: CGFloat = 0.5) -> [CGRect] {
         frames.indices.flatMap { i in
@@ -121,6 +170,14 @@ public struct FacingStretch: Equatable, Sendable {
     /// Along the edge: y for left/right edges, x for top/bottom.
     public let span: Range<CGFloat>
     public let gap: CGFloat
+}
+
+public struct SidewaysReach: Equatable, Sendable {
+    public let sourceIndex: Int
+    public let edge: Edge
+    /// Along the edge: y for left/right edges, x for top/bottom.
+    public let span: Range<CGFloat>
+    public let targetIndex: Int
 }
 
 private extension Range where Bound == CGFloat {

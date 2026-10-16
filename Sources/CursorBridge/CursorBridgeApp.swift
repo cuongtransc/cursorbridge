@@ -2,6 +2,24 @@ import AppKit
 import SwiftUI
 
 @main
+enum Entry {
+    static func main() {
+        // The build runs the binary this way to render AppIcon.icns from the same drawing code,
+        // before any of the app (event tap, permission prompt) starts.
+        let arguments = CommandLine.arguments
+        if let index = arguments.firstIndex(of: "--write-iconset"), index + 1 < arguments.count {
+            do {
+                try MainActor.assumeIsolated { try AppIcon.writeIconset(to: URL(fileURLWithPath: arguments[index + 1])) }
+                exit(0)
+            } catch {
+                FileHandle.standardError.write(Data("write-iconset failed: \(error)\n".utf8))
+                exit(1)
+            }
+        }
+        CursorBridgeApp.main()
+    }
+}
+
 struct CursorBridgeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
@@ -9,7 +27,8 @@ struct CursorBridgeApp: App {
         MenuBarExtra {
             MenuContent(model: appDelegate.model, layoutWindow: appDelegate.layoutWindow)
         } label: {
-            Image(systemName: appDelegate.model.isIntercepting ? "cursorarrow.motionlines" : "cursorarrow")
+            Image(nsImage: AppIcon.menuBarImage(for: appDelegate.model.status))
+                .accessibilityLabel("CursorBridge, \(appDelegate.model.status.title)")
         }
     }
 }
@@ -80,7 +99,8 @@ final class LayoutWindowController {
         let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(model: model)))
         window.title = "CursorBridge Layout"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        window.setContentSize(NSSize(width: 960, height: 640))
+        // Tall enough for the whole sidebar without scrolling, short enough for a 1117 pt laptop screen.
+        window.setContentSize(NSSize(width: 1100, height: 900))
         window.isReleasedWhenClosed = false
         window.center()
         // A closed window keeps its SwiftUI view alive, and with it the editor's 30 Hz cursor timer.
@@ -97,9 +117,16 @@ private struct MenuContent: View {
     let layoutWindow: LayoutWindowController
 
     var body: some View {
-        Toggle("Enable Cursor Routing", isOn: $model.isEnabled)
-        if !model.isTrusted {
-            Button("Grant Accessibility Access…") { Permissions.openAccessibilitySettings() }
+        Text(model.status.title)
+        if model.isTrusted {
+            Toggle("Cursor Routing", isOn: $model.isEnabled)
+        } else {
+            Button("Grant Access…") { Permissions.openAccessibilitySettings() }
+        }
+        Divider()
+        Section("Edges with nothing next to them") {
+            Toggle("Jump Across Gaps", isOn: $model.jumpsGaps)
+            Toggle("Reach Displays off to the Side", isOn: $model.reachesSideways)
         }
         Divider()
         Button("Configure Layout…") { layoutWindow.show() }
