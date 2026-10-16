@@ -122,6 +122,34 @@ public enum VirtualLayout {
         return best?.index
     }
 
+    /// The stretches of every edge that face no display at all, each with the display the cursor
+    /// reaches from there when it reaches sideways.
+    public static func sidewaysReaches(in frames: [CGRect], tolerance: CGFloat = 0.5) -> [SidewaysReach] {
+        var reaches: [SidewaysReach] = []
+        for i in frames.indices {
+            let a = frames[i]
+            for edge in Edge.allCases {
+                var open = edge.runsVertically ? [a.minY..<a.maxY] : [a.minX..<a.maxX]
+                for stretch in facingStretches(from: i, edge: edge, in: frames, tolerance: tolerance) {
+                    open = open.flatMap { $0.subtracting(stretch.span) }
+                }
+                for span in open where span.upperBound - span.lowerBound > tolerance {
+                    let mid = (span.lowerBound + span.upperBound) / 2
+                    let point = switch edge {
+                    case .top: CGPoint(x: mid, y: a.minY)
+                    case .bottom: CGPoint(x: mid, y: a.maxY)
+                    case .left: CGPoint(x: a.minX, y: mid)
+                    case .right: CGPoint(x: a.maxX, y: mid)
+                    }
+                    if let target = nearestBeyond(from: i, edge: edge, at: point, in: frames, tolerance: tolerance) {
+                        reaches.append(SidewaysReach(sourceIndex: i, edge: edge, span: span, targetIndex: target))
+                    }
+                }
+            }
+        }
+        return reaches
+    }
+
     /// The empty regions the cursor jumps across when gap jumping is on.
     public static func gapBridges(of frames: [CGRect], tolerance: CGFloat = 0.5) -> [CGRect] {
         frames.indices.flatMap { i in
@@ -142,6 +170,14 @@ public struct FacingStretch: Equatable, Sendable {
     /// Along the edge: y for left/right edges, x for top/bottom.
     public let span: Range<CGFloat>
     public let gap: CGFloat
+}
+
+public struct SidewaysReach: Equatable, Sendable {
+    public let sourceIndex: Int
+    public let edge: Edge
+    /// Along the edge: y for left/right edges, x for top/bottom.
+    public let span: Range<CGFloat>
+    public let targetIndex: Int
 }
 
 private extension Range where Bound == CGFloat {

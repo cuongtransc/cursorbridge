@@ -82,10 +82,19 @@ struct LayoutEditorView: View {
                 }
 
                 Group {
-                    EdgeLines(segments: VirtualLayout.sharedEdges(of: frameList).map(transform.toCanvas), color: .green)
+                    EdgeLines(segments: VirtualLayout.sharedEdges(of: frameList).map(transform.toCanvas), color: EdgeColors.touching)
+                    ForEach(Array(model.sidewaysReaches.enumerated()), id: \.offset) { _, reach in
+                        if let source = frames[reach.source.displayID], let target = frames[reach.targetEdge.displayID] {
+                            SidewaysArrow(
+                                along: transform.toCanvas(source.stretch(reach.span, along: reach.source.edge)),
+                                into: transform.toCanvas(target.segment(along: reach.targetEdge.edge)),
+                                outward: reach.source.edge.outward
+                            )
+                        }
+                    }
                     ForEach(Array(model.walls), id: \.self) { wall in
                         if let frame = frames[wall.displayID] {
-                            EdgeLines(segments: [transform.toCanvas(frame.segment(along: wall.edge))], color: .red, width: 5)
+                            EdgeLines(segments: [transform.toCanvas(frame.segment(along: wall.edge))], color: EdgeColors.wall, width: 5)
                         }
                     }
                     ForEach(model.links) { link in
@@ -240,6 +249,7 @@ private struct EdgeLines: View {
     let segments: [Segment]
     let color: Color
     var width: CGFloat = 4
+    var dash: [CGFloat] = []
 
     var body: some View {
         Path { path in
@@ -248,7 +258,7 @@ private struct EdgeLines: View {
                 path.addLine(to: segment.end)
             }
         }
-        .stroke(color, style: StrokeStyle(lineWidth: width, lineCap: .round))
+        .stroke(color, style: StrokeStyle(lineWidth: width, lineCap: dash.isEmpty ? .round : .butt, dash: dash))
     }
 }
 
@@ -267,6 +277,67 @@ private struct LinkLine: View {
             Circle().fill(.orange).frame(width: 9, height: 9).position(from.midpoint)
             Circle().fill(.orange).frame(width: 9, height: 9).position(to.midpoint)
         }
+    }
+}
+
+private extension CGRect {
+    /// The part of `edge` that `span` covers (y for left/right edges, x for top/bottom).
+    func stretch(_ span: Range<CGFloat>, along edge: CursorBridgeCore.Edge) -> Segment {
+        switch edge {
+        case .top: Segment(start: CGPoint(x: span.lowerBound, y: minY), end: CGPoint(x: span.upperBound, y: minY))
+        case .bottom: Segment(start: CGPoint(x: span.lowerBound, y: maxY), end: CGPoint(x: span.upperBound, y: maxY))
+        case .left: Segment(start: CGPoint(x: minX, y: span.lowerBound), end: CGPoint(x: minX, y: span.upperBound))
+        case .right: Segment(start: CGPoint(x: maxX, y: span.lowerBound), end: CGPoint(x: maxX, y: span.upperBound))
+        }
+    }
+}
+
+/// A dashed stretch that faces nothing, with an arrow to the nearest point of the display it reaches.
+private struct SidewaysArrow: View {
+    let along: Segment
+    let into: Segment
+    /// Unit vector pointing out of the source edge, which is also into the target display.
+    let outward: CGVector
+
+    var body: some View {
+        let from = along.midpoint
+        let entry = into.nearestPoint(to: from)
+        // Bend out of the edge and end just inside the target, so the arrow never lies along the edges.
+        let to = CGPoint(x: entry.x + outward.dx * 14, y: entry.y + outward.dy * 14)
+        let control = CGPoint(x: from.x + outward.dx * 40, y: from.y + outward.dy * 40)
+        let angle = atan2(to.y - control.y, to.x - control.x)
+        ZStack {
+            EdgeLines(segments: [along], color: EdgeColors.sideways, width: 4, dash: [7, 5])
+            Path { path in
+                path.move(to: from)
+                path.addQuadCurve(to: to, control: control)
+                for side in [-1.0, 1.0] {
+                    path.move(to: to)
+                    path.addLine(to: CGPoint(x: to.x - 9 * cos(angle + side * 0.5), y: to.y - 9 * sin(angle + side * 0.5)))
+                }
+            }
+            .stroke(EdgeColors.sideways, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+        }
+    }
+}
+
+private extension CursorBridgeCore.Edge {
+    var outward: CGVector {
+        switch self {
+        case .top: CGVector(dx: 0, dy: -1)
+        case .bottom: CGVector(dx: 0, dy: 1)
+        case .left: CGVector(dx: -1, dy: 0)
+        case .right: CGVector(dx: 1, dy: 0)
+        }
+    }
+}
+
+private extension Segment {
+    func nearestPoint(to point: CGPoint) -> CGPoint {
+        CGPoint(
+            x: min(max(point.x, min(start.x, end.x)), max(start.x, end.x)),
+            y: min(max(point.y, min(start.y, end.y)), max(start.y, end.y))
+        )
     }
 }
 

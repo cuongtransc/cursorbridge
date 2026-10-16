@@ -3,6 +3,7 @@ import CursorBridgeCore
 import Observation
 import OSLog
 import ServiceManagement
+import SwiftUI
 
 let routingLog = Logger(subsystem: "dev.cursorbridge.CursorBridge", category: "routing")
 
@@ -38,11 +39,35 @@ enum EdgeRule: Hashable {
 }
 
 struct EdgeDestination: Hashable {
-    let display: Display
-    let acrossGap: Bool
+    enum Route: Hashable { case touching, acrossGap, sideways }
 
-    static func == (lhs: Self, rhs: Self) -> Bool { lhs.display.id == rhs.display.id && lhs.acrossGap == rhs.acrossGap }
-    func hash(into hasher: inout Hasher) { hasher.combine(display.id); hasher.combine(acrossGap) }
+    let display: Display
+    let route: Route
+
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.display.id == rhs.display.id && lhs.route == rhs.route }
+    func hash(into hasher: inout Hasher) { hasher.combine(display.id); hasher.combine(route) }
+}
+
+enum RoutingStatus: Equatable {
+    case running(displays: Int)
+    case off
+    case needsAccess
+
+    var title: String {
+        switch self {
+        case .running(let displays): "Routing on · \(displays) display\(displays == 1 ? "" : "s")"
+        case .off: "Routing off"
+        case .needsAccess: "Needs Accessibility access"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .running: .green
+        case .off: .secondary
+        case .needsAccess: .orange
+        }
+    }
 }
 
 @MainActor
@@ -86,6 +111,11 @@ final class AppModel {
             watchForAccessibilityGrant()
         }
         applyRouting()
+    }
+
+    var status: RoutingStatus {
+        if !isTrusted { return .needsAccess }
+        return isIntercepting ? .running(displays: displays.count) : .off
     }
 
     var isEnabled: Bool {
@@ -159,21 +189,27 @@ final class AppModel {
             guard jumpsGaps || !acrossGap,
                   !reserved.contains(EdgeRef(displayID: target.id, edge: edge.edge.opposite))
             else { continue }
-            let destination = EdgeDestination(display: target.display, acrossGap: acrossGap)
+            let destination = EdgeDestination(display: target.display, route: acrossGap ? .acrossGap : .touching)
             if !destinations.contains(destination) { destinations.append(destination) }
         }
-        // The router reaches sideways from whatever part of the edge faces nothing.
-        let frame = placed[index].virtualFrame
-        let length = edge.edge == .left || edge.edge == .right ? frame.height : frame.width
-        let faced = VirtualLayout.facingStretches(from: index, edge: edge.edge, in: placed.map(\.virtualFrame))
-            .reduce(0) { $0 + $1.span.upperBound - $1.span.lowerBound }
-        if reachesSideways, faced < length - 1,
-           let nearest = VirtualLayout.nearestBeyond(from: index, edge: edge.edge, in: placed.map(\.virtualFrame)),
-           !reserved.contains(EdgeRef(displayID: placed[nearest].id, edge: edge.edge.opposite)),
-           !destinations.contains(where: { $0.display.id == placed[nearest].id }) {
-            destinations.append(EdgeDestination(display: placed[nearest].display, acrossGap: true))
+        for reach in sidewaysReaches where reach.source == edge {
+            let destination = EdgeDestination(display: reach.target, route: .sideways)
+            if !destinations.contains(where: { $0.display.id == reach.target.id }) { destinations.append(destination) }
         }
         return destinations
+    }
+
+    /// Where the cursor reaches sideways from, with the option on: walls and links take their edges out.
+    var sidewaysReaches: [(source: EdgeRef, span: Range<CGFloat>, target: Display, targetEdge: EdgeRef)] {
+        guard reachesSideways else { return [] }
+        let placed = placedDisplays
+        let reserved = walls.union(links.flatMap { [$0.a, $0.b] })
+        return VirtualLayout.sidewaysReaches(in: placed.map(\.virtualFrame)).compactMap { reach in
+            let source = EdgeRef(displayID: placed[reach.sourceIndex].id, edge: reach.edge)
+            let entry = EdgeRef(displayID: placed[reach.targetIndex].id, edge: reach.edge.opposite)
+            guard !reserved.contains(source), !reserved.contains(entry) else { return nil }
+            return (source, reach.span, placed[reach.targetIndex].display, entry)
+        }
     }
 
     func display(withID id: String) -> Display? {

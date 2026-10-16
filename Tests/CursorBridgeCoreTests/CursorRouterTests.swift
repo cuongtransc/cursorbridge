@@ -358,6 +358,14 @@ private let grid = VirtualLayout.place([tl, tr, bl, br], origins: [:], mode: .lo
         #expect(router.route(from: CGPoint(x: -1000, y: -1437), to: CGPoint(x: -1000, y: -1440), delta: CGVector(dx: 0, dy: -4)) == .pass)
     }
 
+    @Test func sidewaysReachesCoverOnlyTheUnfacedStretches() {
+        let frames = VirtualLayout.place([left, right, laptop], origins: [:], mode: .logical).map(\.virtualFrame)
+        let reaches = VirtualLayout.sidewaysReaches(in: frames)
+        #expect(reaches.contains(SidewaysReach(sourceIndex: 0, edge: .bottom, span: -1696..<0, targetIndex: 2)))
+        #expect(reaches.contains(SidewaysReach(sourceIndex: 1, edge: .bottom, span: 1728..<3424, targetIndex: 2)))
+        #expect(reaches.count == 2)
+    }
+
     @Test func laptopIsTheNearestDisplayBelowTheLeftMonitor() {
         let placed = VirtualLayout.place([left, right, laptop], origins: [:], mode: .logical)
         #expect(VirtualLayout.nearestBeyond(from: 0, edge: .bottom, in: placed.map(\.virtualFrame)) == 2)
