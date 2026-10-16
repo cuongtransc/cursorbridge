@@ -83,6 +83,11 @@ final class LayoutWindowController {
         window.setContentSize(NSSize(width: 960, height: 640))
         window.isReleasedWhenClosed = false
         window.center()
+        // A closed window keeps its SwiftUI view alive, and with it the editor's 30 Hz cursor timer.
+        // Dropping the window on close stops the timer; the next show() builds a fresh one.
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.window = nil }
+        }
         return window
     }
 }
